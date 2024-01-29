@@ -1,0 +1,194 @@
+import matplotlib.pyplot as plt
+import numpy as np
+import os
+import cv2
+import pathlib
+import tensorflow as tf
+import matplotlib.pyplot as plt
+
+from tensorflow import keras
+from tensorflow.keras import layers
+from tensorflow.keras.models import Sequential
+from keras.preprocessing import image
+from glob import glob
+from PIL import Image, ImageFilter
+from skimage import transform
+
+from tensorflow.python.client import device_lib
+print(device_lib.list_local_devices())
+
+# Config
+data_dir_training = r"C:\Users\xjane\Documents\Jan\Master\Semester2\KI\BelgiumTSC_Training\Training"
+data_dir_testing = r"C:\Users\xjane\Documents\Jan\Master\Semester2\KI\BelgiumTSC_Testing\Testing"
+
+
+
+# Convert .ppm images to .png
+def convert_images(path):
+    print("Convert images ...")
+    for subDir in [f.path for f in os.scandir(path) if f.is_dir()]:
+        input_dir = subDir + "\\*.ppm"
+        for ppm in glob(input_dir):
+            cv2.imwrite(ppm.title() + ".png", cv2.imread(ppm))
+
+# Filter images
+def filter_images(path):
+    print("Filter images ...")
+    for subDir in [f.path for f in os.scandir(path) if f.is_dir()]:
+        input_dir = subDir + "\\*.png"
+        for raw_img in glob(input_dir):
+            filtered_img = Image.open(raw_img).convert('L')
+            #filtered_img = filtered_img.quantize(8)
+            filtered_img = filtered_img.filter(ImageFilter.FIND_EDGES)
+            filtered_img.save(raw_img)
+
+# Load images from given path
+def load_images(path):
+    data_dir = pathlib.Path(path)
+    convert_images(data_dir)
+    #filter_images(data_dir)
+
+    print("Directory: " + path)
+    image_count = len(list(data_dir.glob('*/*.png')))
+    print("Number of images: " + str(image_count))
+
+    return data_dir
+
+
+# Load training & test dataset
+data_set_training = load_images(data_dir_training)
+data_set_testing = load_images(data_dir_testing)
+
+# Create Dataset
+batch_size = 32
+img_height = 180
+img_width = 180
+
+train_ds = tf.keras.utils.image_dataset_from_directory(
+  data_set_training,
+  #validation_split=0,
+  #subset="training",
+  seed=123,
+  #color_mode="grayscale",
+  image_size=(img_height, img_width),
+  batch_size=batch_size)
+
+val_ds = tf.keras.utils.image_dataset_from_directory(
+  data_set_testing,
+  #validation_split=1,
+  #subset="validation",
+  #color_mode="grayscale",
+  seed=123,
+  image_size=(img_height, img_width),
+  batch_size=batch_size)
+
+class_names = train_ds.class_names
+
+
+# Configure dataset for performance
+AUTOTUNE = tf.data.AUTOTUNE
+
+
+train_ds = train_ds.cache().shuffle(1000).prefetch(buffer_size=AUTOTUNE)
+val_ds = val_ds.cache().prefetch(buffer_size=AUTOTUNE)
+
+# Data augmentation
+data_augmentation = keras.Sequential(
+  [
+    #layers.RandomFlip("horizontal",
+                      #input_shape=(img_height,
+                                  #img_width,
+                                  #3)),
+    #layers.RandomFlip("vertical",
+     #                 input_shape=(img_height,
+      #                            img_width,
+       #                           3)),
+
+    layers.RandomRotation(0.1),
+    layers.RandomZoom(0.15),
+  ]
+)
+
+# Create the model
+num_classes = len(class_names)
+
+
+# Hier: Layer hinzufügen oder entfernen und jeweilige Aktivierungsfunktion anpassen
+
+model = keras.models.Sequential([
+    data_augmentation,
+    layers.Rescaling(1. / 255, input_shape=(img_height, img_width, 3)),
+    layers.Conv2D(filters=1, kernel_size=(5, 5), strides=(1, 1), activation='relu', padding="same"),
+    layers.Conv2D(filters=32, kernel_size=(5, 5), strides=(1, 1), activation='relu', padding="same"),
+    layers.MaxPool2D(pool_size=(2, 2)),
+    layers.Dropout(.25),
+    layers.Conv2D(filters=64, kernel_size=(3, 3), activation='relu', padding="same"),
+    layers.Conv2D(filters=64, kernel_size=(3, 3), activation='relu', padding="same"),
+    layers.MaxPool2D(pool_size=(3, 3)),
+    layers.Dropout(.25),
+    layers.Flatten(),
+    layers.Dense(256, activation='relu'),
+    layers.BatchNormalization(),
+    layers.Dropout(0.5),
+    layers.Dense(num_classes, activation='softmax')
+])
+
+
+# Compile the model
+adam_optimizer = keras.optimizers.Adam(learning_rate=0.001) #default is 0.001
+model.compile(#optimizer='adam',
+              optimizer=adam_optimizer,
+              loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=False),
+              metrics=['accuracy'])
+
+
+# Train the model
+# Hier: Anzahl der Epochen können beeinflusst werden
+no_of_epochs_training=15
+epochs = no_of_epochs_training
+
+
+history = model.fit(
+    train_ds,
+    validation_data=val_ds,
+    epochs=epochs,
+    batch_size=8,
+)
+
+# Visualize the training results
+acc = history.history['accuracy']
+val_acc = history.history['val_accuracy']
+
+loss = history.history['loss']
+val_loss = history.history['val_loss']
+
+epochs_range = range(epochs)
+
+
+model.save('my_model.h5')
+
+# Model summary
+model.summary()
+
+# Visualize Data
+plt.figure(figsize=(10, 10))
+for images, labels in train_ds.take(1):
+    for i in range(9):
+        ax = plt.subplot(3, 3, i + 1)
+        plt.imshow(images[i].numpy().astype("uint8"))
+        plt.title(class_names[labels[i]])
+        plt.axis("off")
+
+plt.figure(figsize=(8, 8))
+plt.subplot(1, 2, 1)
+plt.plot(epochs_range, acc, label='Training Accuracy')
+plt.plot(epochs_range, val_acc, label='Validation Accuracy')
+plt.legend(loc='lower right')
+plt.title('Training and Validation Accuracy')
+
+plt.subplot(1, 2, 2)
+plt.plot(epochs_range, loss, label='Training Loss')
+plt.plot(epochs_range, val_loss, label='Validation Loss')
+plt.legend(loc='upper right')
+plt.title('Training and Validation Loss')
+plt.show()

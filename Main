@@ -1,7 +1,8 @@
+import os
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+import cv2
 import matplotlib.pyplot as plt
 import numpy as np
-import os
-import cv2
 import pathlib
 import tensorflow as tf
 import matplotlib.pyplot as plt
@@ -15,13 +16,16 @@ from PIL import Image, ImageFilter
 from skimage import transform
 
 from tensorflow.python.client import device_lib
+
 print(device_lib.list_local_devices())
+print(tf.config.list_physical_devices('GPU') )
 
 # Config
-data_dir_training = r"C:\Users\xjane\Documents\Jan\Master\Semester2\KI\BelgiumTSC_Training\Training"
-data_dir_testing = r"C:\Users\xjane\Documents\Jan\Master\Semester2\KI\BelgiumTSC_Testing\Testing"
-
-
+data_dir_training = r"..\BelgiumTSC_Training\Training"
+data_dir_testing = r"..\BelgiumTSC_Testing\Testing"
+batch_size = 32
+no_of_epochs_training = 15
+learning_rate = 0.001
 
 # Convert .ppm images to .png
 def convert_images(path):
@@ -47,11 +51,9 @@ def load_images(path):
     data_dir = pathlib.Path(path)
     convert_images(data_dir)
     #filter_images(data_dir)
-
     print("Directory: " + path)
     image_count = len(list(data_dir.glob('*/*.png')))
     print("Number of images: " + str(image_count))
-
     return data_dir
 
 
@@ -60,7 +62,6 @@ data_set_training = load_images(data_dir_training)
 data_set_testing = load_images(data_dir_testing)
 
 # Create Dataset
-batch_size = 32
 img_height = 180
 img_width = 180
 
@@ -81,20 +82,20 @@ val_ds = tf.keras.utils.image_dataset_from_directory(
   seed=123,
   image_size=(img_height, img_width),
   batch_size=batch_size)
-
 class_names = train_ds.class_names
 
 
 # Configure dataset for performance
 AUTOTUNE = tf.data.AUTOTUNE
 
-
 train_ds = train_ds.cache().shuffle(1000).prefetch(buffer_size=AUTOTUNE)
 val_ds = val_ds.cache().prefetch(buffer_size=AUTOTUNE)
+input = keras.Input(shape=(img_height, img_width, 3))
 
 # Data augmentation
 data_augmentation = keras.Sequential(
   [
+    keras.Input(shape=(img_height, img_width, 3)),
     #layers.RandomFlip("horizontal",
                       #input_shape=(img_height,
                                   #img_width,
@@ -115,9 +116,9 @@ num_classes = len(class_names)
 
 # Hier: Layer hinzufügen oder entfernen und jeweilige Aktivierungsfunktion anpassen
 
-model = keras.models.Sequential([
+model = keras.Sequential([
     data_augmentation,
-    layers.Rescaling(1. / 255, input_shape=(img_height, img_width, 3)),
+    layers.Rescaling(1. / 255),
     layers.Conv2D(filters=1, kernel_size=(5, 5), strides=(1, 1), activation='relu', padding="same"),
     layers.Conv2D(filters=32, kernel_size=(5, 5), strides=(1, 1), activation='relu', padding="same"),
     layers.MaxPool2D(pool_size=(2, 2)),
@@ -133,9 +134,8 @@ model = keras.models.Sequential([
     layers.Dense(num_classes, activation='softmax')
 ])
 
-
 # Compile the model
-adam_optimizer = keras.optimizers.Adam(learning_rate=0.001) #default is 0.001
+adam_optimizer = keras.optimizers.Adam(learning_rate=learning_rate) #default is 0.001
 model.compile(#optimizer='adam',
               optimizer=adam_optimizer,
               loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=False),
@@ -152,7 +152,7 @@ history = model.fit(
     train_ds,
     validation_data=val_ds,
     epochs=epochs,
-    batch_size=8,
+    batch_size=batch_size,
 )
 
 # Visualize the training results
